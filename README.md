@@ -63,8 +63,12 @@ Trois couches, volontairement séparées :
 
 ## Prérequis
 
-- **Python 3.13** (`.python-version`)
-- **[uv](https://docs.astral.sh/uv/)** ≥ 0.12 (gère le venv et le lockfile)
+> **Plateforme : Windows 10/11, commandes PowerShell.** Toutes les commandes de ce README sont
+> testées telles quelles dans PowerShell (Windows Terminal). Aucune commande bash n'est nécessaire.
+
+- **Python 3.13** (`.python-version`, installé automatiquement par `uv` si absent)
+- **[uv](https://docs.astral.sh/uv/)** ≥ 0.12 (gère le venv et le lockfile) — installation :
+  `winget install --id astral-sh.uv -e`, puis rouvrir le terminal.
 - Un **serveur MCP Facturation** joignable — projet séparé, **non inclus dans ce dépôt** — par défaut
   `http://127.0.0.1:8000/mcp` en transport `streamable_http`. Sans lui, `agent.py` et `chat.py`
   s'arrêtent avec un message explicite.
@@ -72,20 +76,22 @@ Trois couches, volontairement séparées :
 
 ---
 
-## Installation
+## Installation (Windows / PowerShell)
 
-```bash
+```powershell
 git clone https://github.com/MarouenKsentini/-Atelier-LangGraph-.git
-cd ./-Atelier-LangGraph-      # le nom commence par un tiret : préfixer par ./ évite de le prendre pour une option
-uv sync                      # crée .venv à partir de uv.lock
-cp .env.example .env         # Windows : Copy-Item .env.example .env
-# puis renseigner GOOGLE_API_KEY dans .env
+cd ./-Atelier-LangGraph-      # le nom commence par un tiret : ./ évite qu'il soit pris pour une option
+uv sync                       # crée .venv à partir de uv.lock
+Copy-Item .env.example .env   # puis ouvrir .env et renseigner GOOGLE_API_KEY
 ```
+
+> Pas besoin d'activer le venv : `uv run` s'en charge. C'est aussi ce qui évite le blocage
+> PowerShell `Activate.ps1 cannot be loaded because running scripts is disabled`.
 
 Vérifier que la chaîne complète répond, sans consommer de quota LLM :
 
-```bash
-uv run agent.py --outils     # liste les outils exposés par le serveur MCP
+```powershell
+uv run agent.py --outils      # liste les outils exposés par le serveur MCP
 ```
 
 ---
@@ -94,7 +100,7 @@ uv run agent.py --outils     # liste les outils exposés par le serveur MCP
 
 Toutes les commandes se lancent **depuis la racine du dépôt** (`graph.py` est importé par nom).
 
-```bash
+```powershell
 uv run chat.py                            # REPL conversationnelle (quit / exit / q pour sortir)
 uv run agent.py "question"                # une ou plusieurs questions, un thread isolé chacune
 uv run agent.py                           # golden set intégré (2 questions, consomme du quota)
@@ -102,12 +108,20 @@ uv run agent.py --outils                  # inventaire des outils, aucun appel L
 uv run agent.py --graph                   # exporte graphe.png, PUIS lance le golden set
 ```
 
-Exemples :
+Exemples (les guillemets doubles protègent les apostrophes des questions) :
 
-```bash
+```powershell
 uv run agent.py "Quels sont les articles disponibles dans le catalogue ?"
 uv run agent.py "quelles sont les informations du client Sonia Trabelsi ?"
 uv run agent.py "Combien d'articles sont en rupture de stock ?"
+```
+
+Forcer un modèle pour une seule commande, sans éditer `.env` :
+
+```powershell
+$env:GOOGLE_MODEL = "gemini-3.1-flash-lite"
+uv run agent.py "Combien d'articles sont en rupture de stock ?"
+Remove-Item Env:GOOGLE_MODEL      # sinon la variable reste pour la session PowerShell
 ```
 
 Chaque exécution de `agent.py` affiche la trace complète de la boucle ReAct :
@@ -139,7 +153,13 @@ Chargées par `load_dotenv()` à l'import de `graph.py` (fichier `.env`, non ver
 | `GOOGLE_MODEL_SECOURS` | `gemini-3.6-flash,gemini-3.5-flash,gemini-3.1-flash-lite` | Modèles de repli, séparés par des virgules, essayés dans l'ordre en cas de `429`/`503`. |
 | `MCP_URL` | `http://127.0.0.1:8000/mcp` | Endpoint du serveur MCP Facturation. |
 
+La colonne « Défaut » donne la valeur codée dans `graph.py` ; le `.env.example` fourni propose une
+autre liste (modèles du moment) — c'est `.env` qui gagne au final.
+
 `.env` est ignoré par Git — ne jamais committer de clé. Utiliser `.env.example` comme modèle.
+
+Sous PowerShell, une variable déjà définie (`$env:GOOGLE_MODEL = "..."`) est prioritaire sur `.env` :
+`load_dotenv()` ne remplace jamais l'environnement existant.
 
 ---
 
@@ -169,6 +189,9 @@ du serveur, d'où le mélange français / camelCase.
 - **Garde-fou** : `RECURSION_LIMIT = 15`, passé dans le `config` de chaque `ainvoke` (pas sur le graphe compilé).
 - **Repli de modèle** : les outils sont liés à chaque modèle, puis chaînés avec `with_fallbacks` —
   un quota épuisé sur le modèle principal bascule sur le suivant sans interrompre la conversation.
+  `max_retries=1` évite d'attendre les longs back-offs de l'API (sinon plusieurs minutes de blocage
+  avant la bascule) ; si toute la chaîne échoue, une erreur lisible `QuotaGeminiEpuise` liste les
+  modèles essayés.
 - **Compatibilité Gemini** : les schémas d'outils sont nettoyés (`additionalProperties`) et aucun
   `temperature` n'est envoyé, car les Gemini 3+ ont des réglages d'échantillonnage figés.
 
@@ -202,6 +225,7 @@ du serveur, d'où le mélange français / camelCase.
 | `Serveur MCP injoignable sur ...` | Le serveur MCP n'écoute pas sur le port 8000 | Démarrer le serveur Facturation, ou corriger `MCP_URL` |
 | `404 NOT_FOUND ... no longer available to new users` | Le modèle a été retiré pour cette clé API | Choisir un autre modèle (voir ci-dessous) |
 | `429 RESOURCE_EXHAUSTED ... limit: 20` | Quota gratuit : **20 requêtes/jour par modèle** | Attendre la réinitialisation, changer de modèle, ou activer la facturation |
+| `Quota Gemini épuisé sur tous les modèles essayés (...)` | Tous les modèles de la chaîne de repli sont à court de quota | Même solution ; le message liste les modèles essayés |
 | `UserWarning ... temperature will be ignored` | Un `temperature` a été passé à un Gemini 3+ | Ne pas passer `temperature` |
 | `Key 'additionalProperties' is not supported in schema` | Le serveur MCP envoie cette clé JSON Schema | Déjà nettoyé par `outils_compatibles_gemini()` |
 | Échec de génération du PNG | mermaid.ink inaccessible | Un `graphe.mmd` de repli est écrit ; le rendu peut être fait localement |
@@ -280,13 +304,7 @@ warnings.filterwarnings("ignore", message=".*fixed sampling defaults.*")
 #### Vérifier qu'il n'y a plus de warnings
 
 ```powershell
-# Windows
-@('Combien d''articles sont en rupture de stock ?','quit') | uv run chat.py 2>&1 | Select-String 'Warning'
-```
-
-```bash
-# macOS / Linux
-printf 'Combien d'"'"'articles sont en rupture de stock ?\nquit\n' | uv run chat.py 2>&1 | grep -i warning
+@("Combien d'articles sont en rupture de stock ?","quit") | uv run chat.py 2>&1 | Select-String "Warning"
 ```
 
 Aucune sortie = plus aucun warning. S'ils réapparaissent alors que `graph.py` contient bien les deux
@@ -297,7 +315,7 @@ est importé).
 
 Lister les modèles réellement utilisables avec la clé :
 
-```bash
+```powershell
 uv run python -c "import os, requests; from dotenv import load_dotenv; load_dotenv(); r = requests.get('https://generativelanguage.googleapis.com/v1beta/models', params={'pageSize': 200, 'key': os.environ['GOOGLE_API_KEY']}, timeout=30); print('\n'.join(m['name'] for m in r.json()['models']))"
 ```
 
