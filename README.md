@@ -206,6 +206,95 @@ du serveur, d'où le mélange français / camelCase.
 | `Key 'additionalProperties' is not supported in schema` | Le serveur MCP envoie cette clé JSON Schema | Déjà nettoyé par `outils_compatibles_gemini()` |
 | Échec de génération du PNG | mermaid.ink inaccessible | Un `graphe.mmd` de repli est écrit ; le rendu peut être fait localement |
 
+### Supprimer les deux warnings `temperature` et `additionalProperties`
+
+Ces deux messages viennent de `langchain-google-genai`, pas du serveur MCP ni du code métier. Ils
+n'empêchent **rien** : la réponse est correcte, seule la console est bruyante. Les deux sont déjà
+traités dans `graph.py` ; cette section explique comment, pour pouvoir les corriger ailleurs
+(autre projet, ancienne version du code, outil MCP différent).
+
+#### 1. `UserWarning: Model 'gemini-3.x' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored`
+
+Les modèles Gemini 3 et suivants utilisent des réglages d'échantillonnage figés. Si on leur passe
+`temperature`, la lib le retire et prévient à chaque requête.
+
+```python
+# ❌ déclenche le warning
+ChatGoogleGenerativeAI(model="gemini-3.6-flash", temperature=0)
+
+# ✅ paramètre absent -> aucun warning
+ChatGoogleGenerativeAI(model="gemini-3.6-flash")
+
+# ✅ équivalent explicite
+ChatGoogleGenerativeAI(model="gemini-3.6-flash", temperature=None)
+```
+
+La déterminisme ne se règle donc pas par la température sur ces modèles : c'est le
+`SYSTEM_PROMPT` (règles « ne devine jamais », « n'invente jamais ») qui le garantit.
+
+#### 2. `Key 'additionalProperties' is not supported in schema, ignoring`
+
+Le serveur MCP décrit chaque outil avec un JSON Schema contenant `additionalProperties: false`.
+L'API Gemini ne connaît pas cette clé : `langchain-google-genai` la supprime et log un warning par
+outil (donc une fois par outil, parfois deux fois par requête). Correctif appliqué ici, dans
+`graph.py` :
+
+```python
+def sans_additional_properties(schema):
+    if isinstance(schema, dict):
+        return {k: sans_additional_properties(v) for k, v in schema.items()
+                if k != "additionalProperties"}
+    if isinstance(schema, list):
+        return [sans_additional_properties(v) for v in schema]
+    return schema
+
+def outils_compatibles_gemini(outils):
+    return [
+        outil.model_copy(update={"args_schema": sans_additional_properties(outil.args_schema)})
+        if isinstance(getattr(outil, "args_schema", None), dict) else outil
+        for outil in outils
+    ]
+
+# puis, dans construire_graphe :
+outils = outils_compatibles_gemini(outils)
+llm_avec_outils = llm.bind_tools(outils)
+tool_node = ToolNode(outils)
+```
+
+On travaille sur des **copies** (`model_copy`) : les outils d'origine restent intacts et continuent
+d'être exécutés normalement par `ToolNode`. `additionalProperties: false` n'apporte rien à Gemini de
+toute façon — il interdit des clés supplémentaires que le modèle n'envoie pas.
+
+Si les schémas viennent d'un outil que vous ne pouvez pas modifier, l'équivalent « je veux juste une
+console propre » :
+
+```python
+import logging, warnings
+
+logging.getLogger("langchain_google_genai._function_utils").setLevel(logging.ERROR)
+warnings.filterwarnings("ignore", message=".*fixed sampling defaults.*")
+```
+
+À éviter ici : ces filtres masquent aussi les vrais avertissements du même module.
+
+#### Vérifier qu'il n'y a plus de warnings
+
+```powershell
+# Windows
+@('Combien d''articles sont en rupture de stock ?','quit') | uv run chat.py 2>&1 | Select-String 'Warning'
+```
+
+```bash
+# macOS / Linux
+printf 'Combien d'"'"'articles sont en rupture de stock ?\nquit\n' | uv run chat.py 2>&1 | grep -i warning
+```
+
+Aucune sortie = plus aucun warning. S'ils réapparaissent alors que `graph.py` contient bien les deux
+correctifs, c'est que le script n'est pas lancé depuis la racine du dépôt (donc un ancien `graph.py`
+est importé).
+
+### Changer de modèle ou vérifier le quota
+
 Lister les modèles réellement utilisables avec la clé :
 
 ```bash
