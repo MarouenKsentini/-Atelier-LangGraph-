@@ -55,8 +55,9 @@ uv run python -c "import graph"  # cheap import/syntax check
 - Gemini free tier quota is **20 requests/day per model** (`429 RESOURCE_EXHAUSTED`, retry delay
   often ~17h). It is not a code bug: switch model or wait. `.env` sets `GOOGLE_MODEL` plus
   `GOOGLE_MODEL_SECOURS` (comma-separated); `construire_graphe()` binds tools on each model and
-  chains them with `with_fallbacks`, so a depleted model rolls over to the next. A fallback call
-  can take ~70s because the SDK retries before giving up on the primary.
+  chains them with `with_fallbacks`, so a depleted model rolls over to the next. `max_retries=1`
+  keeps that switch fast, and when the whole chain fails the graph raises `QuotaGeminiEpuise`
+  (LangChain would otherwise report only the first model's error).
 - A `404 NOT_FOUND ... no longer available to new users` on the model means it was retired for this
   API key. List what the key can use, then update `GOOGLE_MODEL`/`GOOGLE_MODEL_SECOURS` in `.env`
   **and** the defaults in `graph.py` (separate places):

@@ -8,6 +8,12 @@ import os
 from dotenv import load_dotenv
 from langchain_core.messages import AIMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
+
+try:  # la classe n'est pas réexportée par le paquet
+    from langchain_google_genai.chat_models import GoogleRateLimitError
+except ImportError:  # pragma: no cover - dépend de la version installée
+    GoogleRateLimitError = ()  # type: ignore[assignment]
+
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
@@ -41,6 +47,10 @@ GESTION DU CONTEXTE DE CONVERSATION
 - En l'absence d'un tel indice, considère qu'il s'agit d'un nouveau sujet sans
   rapport avec ce qui précède, même si le thème général se ressemble.
 """
+
+
+class QuotaGeminiEpuise(RuntimeError):
+    """Tous les modèles de la chaîne de repli ont échoué (quota la plupart du temps)."""
 
 
 def derniere_reponse(messages: list) -> str:
@@ -101,9 +111,12 @@ def construire_graphe(outils):
     llms = [
         # Pas de `temperature` : les Gemini 3+ ont des réglages d'échantillonnage
         # figés, et la lib émet un UserWarning si on en passe un.
+        # `max_retries=1` : sans ça, un 429 (quota) est retenté ~5 fois par modèle
+        # avant de basculer, ce qui bloque la console plusieurs minutes.
         ChatGoogleGenerativeAI(
             model=modele,
             google_api_key=GOOGLE_API_KEY,
+            max_retries=1,
         ).bind_tools(outils)
         for modele in modeles
     ]
@@ -115,7 +128,18 @@ def construire_graphe(outils):
         messages = state["messages"]
         if not messages or not isinstance(messages[0], SystemMessage):
             messages = [SystemMessage(content=SYSTEM_PROMPT)] + list(messages)
-        reponse = llm_avec_outils.invoke(messages)
+        try:
+            reponse = llm_avec_outils.invoke(messages)
+        except GoogleRateLimitError as exc:
+            # LangChain relance l'erreur du *premier* modèle, qui ne dit pas que
+            # les suivants ont aussi échoué : on reformule pour être actionnable.
+            raise QuotaGeminiEpuise(
+                "Quota Gemini épuisé sur tous les modèles essayés "
+                f"({', '.join(modeles)}).\n"
+                "  Quota gratuit : 20 requêtes/jour/modèle. Attendre la "
+                "réinitialisation (minuit Pacifique), changer GOOGLE_MODEL / "
+                "GOOGLE_MODEL_SECOURS dans .env, ou activer la facturation Google AI."
+            ) from exc
         return {"messages": [reponse]}
 
     def route_apres_agent(state: MessagesState):
