@@ -1,0 +1,23 @@
+[project]
+name = "atelier-langgraph"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "marouen ksentini", email = "marouenksentini@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "langchain>=1.4.7",
+    "langchain-google-genai>=4.4.2",
+    "langchain-mcp-adapters>=0.3.2",
+    "langgraph>=1.2.16",
+    "python-dotenv>=1.2.4",
+]
+
+[project.scripts]
+atelier-langgraph = "atelier_langgraph:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
